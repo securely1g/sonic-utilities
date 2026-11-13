@@ -1,0 +1,111 @@
+# sonic-utilities Bazel source wheel
+
+Pinned owner source: `627858630348effec301290da9054313ec54c2ef`. Public target:
+`@sonic-utilities//:sonic_utilities_wheel`, module `sonic-utilities@1.2`.
+Root source target is `//:sonic_utilities_wheel`.
+
+Uses maintained rules_python `py_wheel` (1.9.0.sonic.1 from the canonical SONiC
+registry), not a bespoke wheel producer and
+not `setup.py` with fake installed SONiC packages. Real owner Python files,
+legacy scripts, package data and console entry points are retained. The small
+`wheel_install_contract` adapter normalizes Python script shebangs to `#!python`
+(like setuptools), sets executable ZIP modes only for legacy scripts and the SSD
+ELF, and regenerates RECORD. Shell/awk shebangs and script bodies are unchanged.
+The maintained rule supports only a uniform `regular_file_mode`; native `0644`
+is the base, with these explicit `0755` exceptions.
+The setup-time dependency-presence checks become unchanged Requires-Dist
+constraints. `wheel_contract_test` independently parses setup.py and compares
+repository-derived payload inventory and bytes (apart from those declared
+shebang transforms), ZIP modes, metadata, scripts, entry points,
+plugin packages, extra requirements and RECORD hashes. Existing source includes
+`tests` in its published packages: this migration preserves that unusual choice.
+It does not silently remove test data or expand to undeclared subpackages.
+The contract's source runfiles enumerate the repository independently of the
+producer's PACKAGES/PACKAGE_DATA globs; it also asserts 1,082 full payload files.
+
+Maintainer, maintainer email, keywords and License-File are preserved. License
+bytes/text are unchanged; Core Metadata 2.4 places LICENSE at
+`dist-info/licenses/LICENSE` (still five dist-info members). Setuptools's optional
+`top_level.txt` remains omitted: complete byte-identical dist-info parity is NOT
+claimed. Wheel metadata formatting/producer fields and the corrected AMD64 tag
+also differ intentionally from a setuptools reference. No license expression is
+inferred and no dependency is removed.
+
+## Important architecture/source boundary
+
+The existing setup.py also distributes `ssd-dump/vtFA_RTK_5766_v2`, an existing
+AMD64 ELF executable, under prefix `bin/`. It is preserved byte-for-byte, **not
+claimed source-built**. Therefore this target is tagged `py3-none-linux_x86_64`,
+not `py3-none-any`. The Python code is source-packaged; a claim that every byte in
+this wheel is source-built would be false. No source producer for that binary
+was found. Retaining this unchanged prebuilt for DHCP-image compatibility was
+approved on 2026-11-01; it remains outside source-built coverage. Do not select
+this wheel for ARM. No execution of the SSD diagnostic
+is performed by the tests.
+
+## Runtime validation and dependencies
+
+`//:wheel_installed_test` uses PyPA installer 0.7.0 pinned by the existing build
+infrastructure installer lock. It installs this wheel and hashed Click 8.1.8 in
+a scratch prefix. A new Python 3.13 child runs in isolated mode, adding only
+that installed site directory (not source/runfiles). It exercises a real CLI
+entry point and generated executable `connect --help`, command dispatch/errors,
+real interface-range behavior, package metadata and plugin discovery. It does
+not connect serial devices, run service commands, use mock SONiC modules, or
+install anything globally. It checks every installed member mode, preserves shell headers, and uses inert
+probes with installed Python headers under a hostile PATH to prove selection of
+the installer-designated interpreter. It checks generated config/show/clear scripts but
+does not claim their execution without full SONiC dependencies.
+
+The small test lock is NOT a complete image runtime lock. Image integration
+must supply **all** unchanged `Requires-Dist` entries plus native SONiC bindings.
+Two observed conflicts must be resolved at the image-owner level, not hidden:
+
+* setup.py requires `click>=8.0,<8.2`; shared infrastructure's uv lock selects
+  Click 8.4.2 (incompatible). The bounded test pins 8.1.8 instead.
+* setup.py requires `toposort==1.6`; the existing config-engine image lock selects
+  toposort 1.10 (incompatible). This wheel retains 1.6 metadata.
+
+The four project dependencies are sonic-config-engine, sonic-platform-common,
+sonic-py-common and sonic-yang-mgmt. Native swsscommon is an additional imported
+runtime dependency throughout the CLI. Full config/show/DHCP plugin imports,
+the existing Redis/SWSS-dependent pytest suite, image-level `pip check`, and all
+native dependency behavior remain integration acceptance, not this narrow smoke.
+
+`sonic-utilities-data/templates` belongs to the separate legacy data package,
+not setup.py's wheel. The `//:utilities_templates` filegroup exports the original
+seven templates for image-owner installation under `/usr/share/sonic/templates`
+(with sonic-cli-gen subdirectory retained). Bash completions are generated by
+that data package and are not represented as a wheel payload or claimed tested.
+
+## Reproduction
+
+Use Bazel 8.5.1, a private output root, no home/system rc. Canonical SONiC registry
+and BCR endpoints are in .bazelrc. The standalone owner selects patched Python rules; an external consumer root
+must select `rules_python >= 1.9.0.sonic.1` with Python 3.13 (Bazel MVS must not
+resolve back to the unpatched rule). No local absolute override is shipped; it does not select local image/Common/shared overrides.
+
+```
+bazel build --lockfile_mode=update //:sonic_utilities_wheel //bazel/runtime:sonic_utilities_wheel
+bazel test --lockfile_mode=update --test_output=errors \
+  //:wheel_contract_test //:wheel_installed_test //:runtime_wheel_contract_test
+```
+
+The **Bazel wheels (AMD64)** check runs these commands on pull requests and
+pushes to `master`. Its `sonic-utilities-wheels-amd64` artifact keeps the two
+identically named wheels in separate `full/` and `runtime/` directories, with
+checksums, the tested revision, the generated module lock and the resolved graph.
+
+The wheel graph does not produce DEBs or include fixture DEBs. No services,
+deployment, public writes, pushes or repository settings changes are required.
+
+## Runtime image variant
+
+`//bazel/runtime:sonic_utilities_wheel` removes only the top-level developer tests
+namespace, preventing demonstrated collisions with inherited YANG/containercfgd
+wheels. `//:runtime_wheel_contract_test` verifies that the full original wheel
+minus those709 test files equals the378-file runtime wheel, and every remaining
+file except regenerated RECORD is byte-identical (including metadata/scripts).
+The full development payload/tests remain available; both variants use the
+same documented shebang/permission/metadata transforms. The prebuilt SSD
+ELF exception is retained honestly; no production feature is silently removed.
